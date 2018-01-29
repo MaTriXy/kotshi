@@ -11,15 +11,15 @@ import javax.lang.model.type.TypeMirror
 import javax.lang.model.util.Types
 
 class Property(
+        defaultValueProviders: DefaultValueProviders,
         types: Types,
         globalConfig: GlobalConfig,
         enclosingClass: Element,
         val parameter: VariableElement,
-        val field: VariableElement,
+        val field: VariableElement?,
         val getter: ExecutableElement?
 ) {
-
-    val typeMirror: TypeMirror = field.asType()
+    val typeMirror: TypeMirror = field?.asType() ?: parameter.asType()
 
     val rawTypeMirror: TypeMirror by lazy { types.erasure(typeMirror) }
 
@@ -27,13 +27,11 @@ class Property(
 
     val defaultValueQualifier = parameter.getDefaultValueQualifier()
 
-    val shouldUseDefaultValue = defaultValueQualifier != null || parameter.hasAnnotation<JsonDefaultValue>()
-
     val adapterKey: AdapterKey = AdapterKey(type, parameter.getJsonQualifiers())
 
-    val name: CharSequence = field.simpleName
+    val name: CharSequence = field?.simpleName ?: parameter.simpleName
 
-    val jsonName: CharSequence = field.getAnnotation(Json::class.java)?.name
+    val jsonName: CharSequence = field?.getAnnotation(Json::class.java)?.name
             ?: parameter.getAnnotation(Json::class.java)?.name
             ?: name
 
@@ -50,8 +48,12 @@ class Property(
             adapterKey.jsonQualifiers.isNotEmpty() ||
             !(type.isPrimitive || type.isBoxedPrimitive || type == TYPE_NAME_STRING)
 
+    val defaultValueProvider: DefaultValueProvider?
+
     init {
-        if (shouldUseDefaultValue) {
+        require(getter != null || field != null)
+
+        defaultValueProvider = if (defaultValueQualifier != null || parameter.hasAnnotation<JsonDefaultValue>()) {
             if (adapterKey.isGeneric) {
                 throw ProcessingError("You cannot use default values on a generic type", parameter)
             }
@@ -60,6 +62,10 @@ class Property(
                     throw ProcessingError("Generic classes must not have wildcard types if you want to use default values", parameter)
                 }
             }
+            defaultValueProviders[this]
+        } else {
+            null
         }
+
     }
 }

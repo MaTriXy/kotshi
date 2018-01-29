@@ -1,6 +1,12 @@
 package se.ansman.kotshi
 
-import com.squareup.moshi.*
+import com.squareup.moshi.FromJson
+import com.squareup.moshi.JsonAdapter
+import com.squareup.moshi.JsonReader
+import com.squareup.moshi.JsonWriter
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.ToJson
+import com.squareup.moshi.Types
 import okio.Buffer
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -155,5 +161,47 @@ class TestAdapterGeneration {
         val actual = adapter.fromJson(json)
         assertEquals(GenericClassWithQualifier("Hello, world!"), actual)
         assertEquals(json, adapter.toJson(actual))
+    }
+
+    @Test
+    fun testMultipleJsonQualifiers() {
+        val adapter = Moshi.Builder()
+                .add(object : Any() {
+                    @FromJson
+                    @WrappedInObject
+                    @WrappedInArray
+                    fun fromJson(reader: JsonReader): String {
+                        reader.beginObject()
+                        reader.nextName()
+                        reader.beginArray()
+                        val value = reader.nextString()
+                        reader.endArray()
+                        reader.endObject()
+                        return value
+                    }
+
+                    @ToJson
+                    fun toJson(writer: JsonWriter, @WrappedInObject @WrappedInArray value: String) {
+                        writer.beginObject()
+                        writer.name("name")
+                        writer.beginArray()
+                        writer.value(value)
+                        writer.endArray()
+                        writer.endObject()
+                    }
+                })
+                .add(KotshiTestFactory())
+                .build()
+                .adapter(MultipleJsonQualifiers::class.java)
+        val json = """{"string":{"name":["Hello, world!"]}}"""
+        val value = MultipleJsonQualifiers("Hello, world!")
+        assertEquals(value, adapter.fromJson(json))
+        assertEquals(json, adapter.toJson(value))
+    }
+
+    @Test
+    fun testToString() {
+        assertEquals("KotshiJsonAdapter(NestedClasses)", moshi.adapter(NestedClasses::class.java).toString())
+        assertEquals("KotshiJsonAdapter(NestedClasses.Inner)", moshi.adapter(NestedClasses.Inner::class.java).toString())
     }
 }

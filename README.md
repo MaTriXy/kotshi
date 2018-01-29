@@ -1,7 +1,7 @@
 Kotshi ![Build status](https://travis-ci.org/ansman/kotshi.svg?branch=master)
 ===
 
-An annotations processor that generates [Moshi](https://github.com/square/moshi) adapters from Kotlin data classes.
+An annotations processor that generates [Moshi](https://github.com/square/moshi) adapters from immutable Kotlin data classes.
 
 Moshi's default reflective adapters assume your classes are compiled from Java code which causes problem for Kotlin
 data classes.
@@ -128,21 +128,23 @@ since some Kotlin features are not available in Java.
 Another limitation is that custom getter names for the JVM cannot be accessed from the constructor parameter which requires
 you to annotate the parameter with `@Getter`. This limitation will be removed when the library starts generating Kotlin code.
 
-Kotlin does not carry over annotations made to enum constants so you cannot annotate an enum constant with
-`@JsonDefaultValue`. This issue will hopefully be resolved in [Kotlin 1.2.20](https://youtrack.jetbrains.com/issue/KT-21433).
+Even though Kotlin nor Moshi prevents having mutable objects Kotshi tries to enforce that for the reason of promoting a good
+design as well as avoiding complexity in the generated code. This means that all the properties that you want serialized must
+be declared in the primary constructor of the class. This means that `var` properties declared outside the constructor will
+not be serialized.
 
 Download
 ---
 ```groovy
-compile 'se.ansman.kotshi:api:0.3.0-beta1'
-kapt 'se.ansman.kotshi:compiler:0.3.0-beta1'
+compile 'se.ansman.kotshi:api:0.3.0'
+kapt 'se.ansman.kotshi:compiler:0.3.0'
 ```
 Snapshots of the development version are available in [Sonatype's snapshots repository](https://oss.sonatype.org/content/repositories/snapshots/).
 
 License
 ---
 ```text
-Copyright 2017 Nicklas Ansman Giertz.
+Copyright 2017-2018 Nicklas Ansman Giertz.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
