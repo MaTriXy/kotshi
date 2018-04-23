@@ -22,12 +22,16 @@ import java.util.*
 import javax.annotation.processing.Filer
 import javax.annotation.processing.Messager
 import javax.annotation.processing.RoundEnvironment
+import javax.lang.model.SourceVersion
 import javax.lang.model.element.Element
 import javax.lang.model.element.ExecutableElement
 import javax.lang.model.element.Modifier
 import javax.lang.model.element.TypeElement
+import javax.lang.model.element.VariableElement
+import javax.lang.model.type.NoType
 import javax.lang.model.type.TypeMirror
 import javax.lang.model.util.ElementFilter
+import javax.lang.model.util.Elements
 import javax.lang.model.util.Types
 import javax.tools.Diagnostic
 
@@ -36,7 +40,9 @@ class AdaptersProcessingStep(
     private val types: Types,
     private val filer: Filer,
     private val adapters: MutableMap<TypeName, GeneratedAdapter>,
-    private val defaultValueProviders: DefaultValueProviders
+    private val defaultValueProviders: DefaultValueProviders,
+    private val elements: Elements,
+    private val sourceVersion: SourceVersion
 ) : KotshiProcessor.ProcessingStep {
     override val annotations: Set<Class<out Annotation>> =
         setOf(JsonSerializable::class.java, KotshiJsonAdapterFactory::class.java)
@@ -57,6 +63,34 @@ class AdaptersProcessingStep(
         }
     }
 
+    private val Element.fields: List<VariableElement>
+        get() {
+            if (this !is TypeElement) {
+                return emptyList()
+            }
+
+            val superFields = if (superclass is NoType) {
+                emptyList()
+            } else {
+                types.asElement(superclass).fields
+            }
+            return superFields.plus(ElementFilter.fieldsIn(enclosedElements))
+        }
+
+    private val Element.methods: List<ExecutableElement>
+        get() {
+            if (this !is TypeElement) {
+                return emptyList()
+            }
+
+            val superMethods = if (superclass is NoType) {
+                emptyList()
+            } else {
+                types.asElement(superclass).methods
+            }
+            return superMethods.plus(ElementFilter.methodsIn(enclosedElements))
+        }
+
     private fun generateJsonAdapter(globalConfig: GlobalConfig, element: Element) {
         val nameAllocator = NameAllocator()
         val typeElement = MoreElements.asType(element)
@@ -65,8 +99,8 @@ class AdaptersProcessingStep(
 
         val constructor = findConstructor(element)
 
-        val fields = ElementFilter.fieldsIn(element.enclosedElements).associateBy { it.simpleName.toString() }
-        val methods = ElementFilter.methodsIn(element.enclosedElements).associateBy { it.simpleName.toString() }
+        val fields = element.fields.associateBy { it.simpleName.toString() }
+        val methods = element.methods.associateBy { it.simpleName.toString() }
 
         val properties = constructor.parameters
             .map { parameter ->
@@ -89,7 +123,15 @@ class AdaptersProcessingStep(
                     }
                 }
 
-                Property(defaultValueProviders, types, globalConfig, element, parameter, field, getter)
+                Property(
+                    defaultValueProviders = defaultValueProviders,
+                    types = types,
+                    globalConfig = globalConfig,
+                    enclosingClass = element,
+                    parameter = parameter,
+                    field = field,
+                    getter = getter
+                )
             }
 
         val adapterKeys: Set<AdapterKey> = properties
@@ -114,8 +156,10 @@ class AdaptersProcessingStep(
         nameAllocator.newName("stringBuilder")
         (0 until adapterKeys.size).forEach { nameAllocator.newName(generateAdapterFieldName(it)) }
 
-        val stringArguments = Collections.nCopies(properties.size, "\$S").joinToString(",\n")
-        val jsonNames = properties.map { it.jsonName }
+        val jsonNames = properties
+            .filterNot { it.isTransient }
+            .map { it.jsonName }
+        val stringArguments = Collections.nCopies(jsonNames.size, "\$S").joinToString(",\n")
         val optionsField = FieldSpec.builder(JsonReader.Options::class.java, "OPTIONS", Modifier.FINAL, Modifier.STATIC, Modifier.PRIVATE)
             .initializer("\$[\$T.of(\n$stringArguments)\$]", JsonReader.Options::class.java, *jsonNames.toTypedArray())
             .build()
@@ -128,6 +172,7 @@ class AdaptersProcessingStep(
             .addMethod(generateConstructor(element, typeElement, adapterKeys, genericTypes))
             .addMethod(generateWriteMethod(typeMirror, properties, adapterKeys))
             .addMethod(generateReadMethod(nameAllocator, typeMirror, properties, adapterKeys, optionsField))
+            .maybeAddGeneratedAnnotation(elements, sourceVersion)
             .build()
 
         val output = JavaFile.builder(adapter.packageName(), typeSpec).build()
@@ -257,7 +302,7 @@ class AdaptersProcessingStep(
             }
             .addStatement("writer.beginObject()")
             .addCode("\n")
-            .applyEach(properties) { property ->
+            .applyEach(properties.filterNot { it.isTransient }) { property ->
                 addStatement("writer.name(\$S)", property.jsonName)
                 val getter = if (property.getter != null) {
                     "value.${property.getter.simpleName}()"
@@ -342,7 +387,7 @@ class AdaptersProcessingStep(
             }
             .addWhile("reader.hasNext()") {
                 addSwitch("reader.selectName(\$N)", optionsField) {
-                    properties.forEachIndexed { index, property ->
+                    properties.filterNot { it.isTransient }.forEachIndexed { index, property ->
                         addSwitchBranch("\$L", index, terminator = "continue") {
                             if (property.shouldUseAdapter) {
                                 val adapterFieldName = generateAdapterFieldName(adapters.indexOf(property.adapterKey))

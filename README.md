@@ -120,6 +120,11 @@ data class MyClass(
 ```
 The default value provider is allowed to return `null` but only if it's annotated with `@Nullable`.
 
+### Transient Values
+
+Fields marked with `@Transient` are not serialized. When constructing, the adapter supplies the specified
+[default value](#default-values) instead.
+
 Limitations
 ---
 Currently KAPT does not allow processing Kotlin files directly but rather the generated stubs. This has some downsides
@@ -136,8 +141,8 @@ not be serialized.
 Download
 ---
 ```groovy
-compile 'se.ansman.kotshi:api:1.0.2' // Use implementation if using Android
-kapt 'se.ansman.kotshi:compiler:1.0.2'
+compile 'se.ansman.kotshi:api:1.0.3' // Use implementation if using Android
+kapt 'se.ansman.kotshi:compiler:1.0.3'
 ```
 Snapshots of the development version are available in [Sonatype's snapshots repository](https://oss.sonatype.org/content/repositories/snapshots/).
 
