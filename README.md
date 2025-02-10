@@ -1,56 +1,64 @@
-Kotshi ![Build status](https://travis-ci.org/ansman/kotshi.svg?branch=master)
-===
-
-An annotations processor that generates [Moshi](https://github.com/square/moshi) adapters from immutable Kotlin data classes.
-
-Moshi's default reflective adapters assume your classes are compiled from Java code which causes problem for Kotlin
-data classes.
+# Kotshi [![Build Gradle](https://github.com/ansman/kotshi/actions/workflows/gradle.yml/badge.svg)](https://github.com/ansman/kotshi/actions/workflows/gradle.yml) [![Maven Central](https://img.shields.io/maven-central/v/se.ansman.kotshi/api.svg)](https://central.sonatype.com/search?namespace=se.ansman.kotshi)
+An annotation processor that generates [Moshi](https://github.com/square/moshi) adapters from Kotlin classes.
 
 There is a reflective adapter for Kotlin but that requires the kotlin reflection library which adds a lot of methods and
-increase the binary size which in a constrained environment such as Android is something is not preferable.
+increases the binary size which in a constrained environment such as Android is not preferable.
 
 This is where Kotshi comes in, it generates fast and optimized adapters for your Kotlin data classes, just as if you'd
-hand written them yourself. It will automatically regenerate the adapters when you modify your class.
+written them by hand yourself. It will automatically regenerate the adapters when you modify your class.
 
-It's made to work with Kotlin data classes with minimal setup, through there are [limitations](#limitations).
-Most of the limitations will be addressed when the support for Kotlin annotation processors improves.
+It's made to work with minimal setup, through there are [limitations](#limitations).
+Most of the limitations will be addressed as the support for Kotlin annotation processors improves.
 
-Usage
----
-First you must annotate your Kotlin data classes with the `@JsonSerializable` annotation:
-```kotlin
-@JsonSerializable
-data class Person(
-    val name: String,
-    val email: String?,
-    // This property uses a custom getter name which requires two annotations.
-    @get:JvmName("hasVerifiedAccount") @Getter("hasVerifiedAccount")
-    val hasVerifiedAccount: Boolean,
-    // This property has a different name in the Json than here so @Json must be applied.
-    @Json(name = "created_at")
-    val signUpDate: Date,
-    // This field has a json qualifier applied, the generated adapter will request an adapter with the qualifier.
-    @NullIfEmpty
-    val jobTitle: String?
-)
-```
+You can find the generated documentation by visiting [kotshi.ansman.se](https://kotshi.ansman.se/).
 
-Then create a class that will be your factory:
-```kotlin
-@KotshiJsonAdapterFactory
-abstract class ApplicationJsonAdapterFactory : JsonAdapter.Factory {
-    companion object {
-        val INSTANCE: ApplicationJsonAdapterFactory = KotshiApplicationJsonAdapterFactory()
-    }
-}
-```
+## Usage
+First you must annotate your types with the `@JsonSerializable` annotation
+<details open>
+  <summary>Annotated class</summary>
 
-Lastly just add the factory to your Moshi instance and you're all set:
-```kotlin
-val moshi = Moshi.Builder()
-    .add(ApplicationJsonAdapterFactory.INSTANCE)
-    .build()
-```
+  ```kotlin
+  @JsonSerializable
+  data class Person(
+      val name: String,
+      val email: String?,
+      val hasVerifiedAccount: Boolean,
+      // This property has a different name in the Json than here so @JsonProperty must be applied.
+      @JsonProperty(name = "created_at")
+      val signUpDate: Date,
+      // This field has a default value which will be used if the field is missing.
+      val jobTitle: String? = null
+  )
+  ```
+</details>
+
+The following types are supported:
+* `data object` (serialized as an empty JSON object)
+* `data class`
+* `enum class`
+* `sealed class`
+
+Then create a class that will be your factory.
+<details open>
+  <summary>Factory setup</summary>
+
+  ```kotlin
+  @KotshiJsonAdapterFactory
+  object ApplicationJsonAdapterFactory : JsonAdapter.Factory by KotshiApplicationJsonAdapterFactory
+  ```
+</details>
+
+Lastly just add the factory to your Moshi instance, and you're all set.
+
+<details open>
+  <summary>Add to moshi</summary>
+
+  ```kotlin
+  val moshi = Moshi.Builder()
+      .add(ApplicationJsonAdapterFactory)
+      .build()
+  ```
+</details>
 
 By default adapters aren't requested for primitive types (even boxed primitive
 types) since it is worse for performance and most people will not have custom
@@ -61,95 +69,157 @@ by passing the same argument to `@JsonSerializable` (the default is to follow
 the module wide setting).
 
 ### Annotations
-* `@GetterName` must be used when overriding the default getter name using `@get:JvmName("...")`.
-* `@JsonSerializable` is the annotation used to generate `JsonAdapter`'s. Should only be placed on Kotlin data classes.
-* `@KotshiConstructor` should be used when there are multiple constructors in the class. Place it on the primary constructor.
-* `@KotshiJsonAdapterFactory` makes Kotshi generate a JsonAdapter factory. Should be placed on an abstract class that implements `JsonAdapter.Factory`.
-* `@JsonDefaultValue` used for enabling default values (see [below](#default-values))
-* `@JsonDefaultValueString` used for specifying default values for String properties inline
-* `@JsonDefaultValueBoolean` used for specifying default values for Boolean properties inline
-* `@JsonDefaultValueByte` used for specifying default values for Byte properties inline
-* `@JsonDefaultValueChar` used for specifying default values for Char properties inline
-* `@JsonDefaultValueShort` used for specifying default values for Short properties inline
-* `@JsonDefaultValueInt` used for specifying default values for Int properties inline
-* `@JsonDefaultValueLong` used for specifying default values for Long properties inline
-* `@JsonDefaultValueFloat` used for specifying default values for Float properties inline
-* `@JsonDefaultValueDouble` used for specifying default values for Double properties inline
+* `@JsonSerializable` is the annotation used to generate `JsonAdapter`'s. Should only be placed on data classes, enums, sealed classes and objects.
+* `@KotshiJsonAdapterFactory` makes Kotshi generate a JsonAdapter factory. Should be placed on an object that implements `JsonAdapter.Factory`.
+* `@JsonDefaultValue` can be used to annotate a fallback for enums or sealed classes when an unknown entry is encountered. The default is to thrown an exception.
+* `@JsonProperty` can be used to customize how a property or enum entry is serialized to and from JSON.
+* `@Polymorphic` and `@PolymorphicLabel` used on sealed classes and their implementations.
+* `@RegisterJsonAdapter` registers a json adapter into the Kotshi json adapter factory.
 
-### Default values
-You can use default values by first annotating a function, field, constructor or enum type with the annotation
-`@JsonDefaultValue`. This will be the provider of the default value.
+### Default Values
+You can use default values just like you normally would in Kotlin.
 
-You then annotate a parameter of the same type (or a supertype) with the same annotation.
+Due to limitations in Kotlin two instances of the object will be created when a class uses default values
+([youtrack issue](https://youtrack.jetbrains.com/issue/KT-18695)). This also means that composite default values are not
+supported (for example a `fullName` property that is `"$firstName $lastName"`).
 
-If you need to have multiple default values of the same type you can create a custom default value annotation by
-annotating it with `@JsonDefaultValue`.
-
-If you don't want to define default value providers for primitive and string properties you can use the specialized
-default value annotations (`@JsonDefaultValueString`, `@JsonDefaultValueInt` etc).
-
-```kotlin
-@Target(AnnotationTarget.VALUE_PARAMETER,
-        AnnotationTarget.FUNCTION,
-        AnnotationTarget.CONSTRUCTOR,
-        AnnotationTarget.FIELD,
-        AnnotationTarget.PROPERTY_GETTER)
-@MustBeDocumented
-@Retention(AnnotationRetention.SOURCE)
-@JsonDefaultValue // Makes this annotation a custom default value annotation
-annotation class StringWithNA
-
-@JsonSerializable
-data class MyClass(
-    @JsonDefaultValue
-    val name: String,
-    @StringWithNA
-    val address: String,
-    @JsonDefaultValueInt(-1)
-    val age: Int
-) {
-    companion object {
-        @JsonDefaultValue
-        @JvmField
-        val defaultString = ""
-
-        @StringWithNA
-        fun defaultStringWithNA() = "N/A"
-    }
-}
-```
-The default value provider is allowed to return `null` but only if it's annotated with `@Nullable`.
+For enum entries and sealed classes you may annotate a single type with `@JsonDefaultValue` to indicate that the entry
+should be used when an unknown value is encountered (by default an exception is thrown).
 
 ### Transient Values
+Properties marked with `@Transient` are not serialized. All transient properties must have a default value.
 
-Fields marked with `@Transient` are not serialized. When constructing, the adapter supplies the specified
-[default value](#default-values) instead.
+Only properties declared in the constructor need to be annotated since other properties are ignored.
 
-Limitations
----
-Currently KAPT does not allow processing Kotlin files directly but rather the generated stubs. This has some downsides
-since some Kotlin features are not available in Java.
+### Custom Names
+By default, the property or enum entry name is used when reading and writing JSON. To change the name used you may use
+the `@JsonProperty` annotation or the regular `@Json` annotation from Moshi to annotate the property or enum entry.
 
-Another limitation is that custom getter names for the JVM cannot be accessed from the constructor parameter which requires
-you to annotate the parameter with `@Getter`. This limitation will be removed when the library starts generating Kotlin code.
+### Json Qualifiers
+Kotshi has full support for `@JsonQualifier`, both plain and those with arguments. Simply annotate a property with the
+desired qualifiers and Kotshi will pick them up.
 
-Even though Kotlin nor Moshi prevents having mutable objects Kotshi tries to enforce that for the reason of promoting a good
-design as well as avoiding complexity in the generated code. This means that all the properties that you want serialized must
-be declared in the primary constructor of the class. This means that `var` properties declared outside the constructor will
-not be serialized.
+### Registered adapters
+It's often required to have a few adapters that are handwritten, for example for framework classes. Handling this in a
+custom factory can be tedious, especially for generic types. To make this easier you may annotate any class or object
+that extends `JsonAdapter` with `@RegisterJsonAdapter` and Kotshi will generate the needed code in the adapter factory.
 
-Download
----
-```groovy
-compile 'se.ansman.kotshi:api:1.0.4' // Use implementation if using Android
-kapt 'se.ansman.kotshi:compiler:1.0.4'
-```
-Snapshots of the development version are available in [Sonatype's snapshots repository](https://oss.sonatype.org/content/repositories/snapshots/).
+### Options
 
-License
----
+#### `kotshi.generatedAnnotation`
+This option tells Kotshi to add the `@Generated` annotation to all generated classes which is disabled by default.
+
+For Java 9+ use `javax.annotation.processing.Generated` and for Java 8 and below use `javax.annotation.Generated`.
+
+Examples:
+<details open>
+  <summary>KSP</summary>
+
+  ```kotlin
+  ksp {
+      // When using Java 9 and above
+      arg("kotshi.generatedAnnotation", "javax.annotation.processing.Generated")
+      // When using Java 8 and below
+      arg("kotshi.generatedAnnotation", "javax.annotation.Generated")
+  }
+  ```
+</details>
+
+
+<details>
+  <summary>KAPT</summary>
+
+  ```kotlin
+  kapt {
+      arguments {
+        // When using Java 9 and above
+        arg("kotshi.generatedAnnotation", "javax.annotation.processing.Generated")
+        // When using Java 8 and below
+        arg("kotshi.generatedAnnotation", "javax.annotation.Generated")
+      }
+  }
+  ```
+</details>
+
+## Limitations
+* Kotshi only processes files written in Kotlin, types written in Java are not supported.
+* Only data classes, enums, sealed classes and data objects are supported.
+  - Only constructor properties will be serialized.
+  - Qualifiers whose arguments are named as a Java keyword cannot be seen by annotations processors and cannot be used.
+* Due to limitation in KAPT, properties with a `java` keyword as a name cannot be marked as transient.
+* Due to a KAPT bug/limitation you cannot add qualifiers to parameters that are inline classes ([youtrack issue](https://youtrack.jetbrains.com/issue/KT-36352)).
+
+## Download
+
+<details open>
+  <summary>Kotlin with KSP</summary>
+
+  ```kotlin
+  plugins {
+    id("com.google.devtools.ksp") version "<version>"
+  }
+
+  dependencies {
+    val kotshiVersion = "3.0.0"
+    implementation("se.ansman.kotshi:api:$kotshiVersion")
+    ksp("se.ansman.kotshi:compiler:$kotshiVersion")
+  }
+  ```
+</details>
+
+<details>
+  <summary>Kotlin with KAPT</summary>
+
+  ```kotlin
+  plugins {
+    kotlin("kapt")
+  }
+
+  dependencies {
+    val kotshiVersion = "3.0.0"
+    implementation("se.ansman.kotshi:api:$kotshiVersion")
+    kapt("se.ansman.kotshi:compiler:$kotshiVersion")
+  }
+  ```
+</details>
+
+<details>
+  <summary>Groovy with KSP</summary>
+
+  ```groovy
+  plugins {
+    id "com.google.devtools.ksp" version "<version>"
+  }
+
+  dependencies {
+    def kotshiVersion = "3.0.0"
+    implementation "se.ansman.kotshi:api:$kotshiVersion"
+    ksp "se.ansman.kotshi:compiler:$kotshiVersion"
+  }
+  ```
+</details>
+
+<details>
+  <summary>Groovy with KAPT</summary>
+
+  ```groovy
+  plugins {
+    id "org.jetbrains.kotlin.kapt"
+  }
+
+  dependencies {
+    def kotshiVersion = "3.0.0"
+    implementation "se.ansman.kotshi:api:$kotshiVersion"
+    kapt "se.ansman.kotshi:compiler:$kotshiVersion"
+  }
+  ```
+</details>
+
+Snapshots of the development version are available in [the sonatype snapshots repository](https://oss.sonatype.org/#view-repositories;snapshots~browsestorage~se/ansman/kotshi/).
+
+## License
 ```text
-Copyright 2017-2018 Nicklas Ansman Giertz.
+Copyright 2017-2024 Nicklas Ansman Giertz.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

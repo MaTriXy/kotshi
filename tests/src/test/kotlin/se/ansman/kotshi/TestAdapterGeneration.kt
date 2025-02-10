@@ -1,21 +1,25 @@
 package se.ansman.kotshi
 
+import assertk.assertFailure
+import assertk.assertThat
+import assertk.assertions.hasMessage
+import assertk.assertions.isEqualTo
+import assertk.assertions.isInstanceOf
 import com.squareup.moshi.FromJson
 import com.squareup.moshi.JsonAdapter
+import com.squareup.moshi.JsonDataException
 import com.squareup.moshi.JsonReader
 import com.squareup.moshi.JsonWriter
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.ToJson
 import com.squareup.moshi.Types
 import okio.Buffer
-import org.junit.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertNull
+import org.junit.jupiter.api.Test
 
 
 class TestAdapterGeneration {
     private val moshi: Moshi = Moshi.Builder()
-        .add(TestFactory.INSTANCE)
+        .add(TestFactory)
         .add(String::class.java, Hello::class.java, HelloJsonAdapter())
         .build()
 
@@ -62,7 +66,8 @@ class TestAdapterGeneration {
         |      "val1",
         |      "val2"
         |    ],
-        |    "value": "val3"
+        |    "value": "val3",
+        |    "valueWithTypeAnnotation": "val4"
         |  }
         |}""".trimMargin()
         val adapter = moshi.adapter(TestClass::class.java)
@@ -86,15 +91,19 @@ class TestAdapterGeneration {
                 mapOf("key1" to setOf("set1", "set2")),
                 mapOf(
                     "key2" to setOf("set1", "set2"),
-                    "key3" to setOf())),
+                    "key3" to setOf()
+                )
+            ),
             abstractProperty = "abstract",
             customName = "other_value",
             annotated = "Hello, World!",
             anotherAnnotated = "Hello, Other World!",
-            genericClass = GenericClass(listOf("val1", "val2"), "val3"))
+            genericClass = GenericClass(listOf("val1", "val2"), "val3", "val4")
+        )
 
-        assertEquals(expected, actual)
-        assertEquals(json, Buffer()
+        assertThat(expected)
+            .isEqualTo(actual)
+        assertThat(Buffer()
             .apply {
                 JsonWriter.of(this).run {
                     indent = "  "
@@ -102,47 +111,39 @@ class TestAdapterGeneration {
                 }
             }
             .readUtf8())
+            .isEqualTo(json)
     }
 
     @Test
     fun testNull() {
-        try {
-            moshi.adapter(TestClass::class.java).fromJson("{}")
-        } catch (e: NullPointerException) {
-            assertEquals("The following properties were null: " +
-                "string, " +
-                "integer, " +
-                "isBoolean, " +
-                "aShort, " +
-                "aByte, " +
-                "aChar, " +
-                "list, " +
-                "nestedList, " +
-                "abstractProperty, " +
-                "customName, " +
-                "annotated, " +
-                "anotherAnnotated, " +
-                "genericClass",
-                e.message)
-        }
+        assertFailure { moshi.adapter(TestClass::class.java).fromJson("{}") }
+            .isInstanceOf<JsonDataException>()
+            .hasMessage(
+                "The following properties were null: string, integer, isBoolean, aShort, aByte, aChar, " +
+                    "list, nestedList, abstractProperty, customName (JSON name other_name), annotated, anotherAnnotated, genericClass (at path $)"
+            )
     }
 
     @Test
     fun testCustomNames() {
-        val json = """{"jsonProp1":"value1","jsonProp2":"value2"}"""
+        val json = """{"jsonProp1":"value1","jsonProp2":"value2","\"weird\"":"weird"}"""
         val adapter = moshi.adapter(CustomNames::class.java)
         val actual = adapter.fromJson(json)
-        val expected = CustomNames("value1", "value2")
-        assertEquals(expected, actual)
-        assertEquals(json, adapter.toJson(actual))
+        val expected = CustomNames("value1", "value2", "weird")
+        assertThat(expected)
+            .isEqualTo(actual)
+        assertThat(json)
+            .isEqualTo(adapter.toJson(actual))
     }
 
     @Test
     fun testExtraFields() {
         val adapter = moshi.adapter(Simple::class.java)
         val actual = adapter.fromJson("""{"prop":"value","extra_prop":"extra_value"}""")
-        assertEquals(Simple("value"), actual)
-        assertEquals("""{"prop":"value"}""", adapter.toJson(actual))
+        assertThat(actual)
+            .isEqualTo(Simple("value"))
+        assertThat(adapter.toJson(actual))
+            .isEqualTo("""{"prop":"value"}""")
     }
 
     @Test
@@ -150,8 +151,10 @@ class TestAdapterGeneration {
         val adapter = moshi.adapter(NestedClasses::class.java)
         val json = """{"inner":{"prop":"value"}}"""
         val actual = adapter.fromJson(json)
-        assertEquals(NestedClasses(NestedClasses.Inner("value")), actual)
-        assertEquals(json, adapter.toJson(actual))
+        assertThat(actual)
+            .isEqualTo(NestedClasses(NestedClasses.Inner("value")))
+        assertThat(adapter.toJson(actual))
+            .isEqualTo(json)
     }
 
     @Test
@@ -160,8 +163,10 @@ class TestAdapterGeneration {
             moshi.adapter(Types.newParameterizedType(GenericClassWithQualifier::class.java, String::class.java))
         val json = """{"value":"world!"}"""
         val actual = adapter.fromJson(json)
-        assertEquals(GenericClassWithQualifier("Hello, world!"), actual)
-        assertEquals(json, adapter.toJson(actual))
+        assertThat(actual)
+            .isEqualTo(GenericClassWithQualifier("Hello, world!"))
+        assertThat(adapter.toJson(actual))
+            .isEqualTo(json)
     }
 
     @Test
@@ -191,27 +196,22 @@ class TestAdapterGeneration {
                     writer.endObject()
                 }
             })
-            .add(TestFactory.INSTANCE)
+            .add(TestFactory)
             .build()
             .adapter(MultipleJsonQualifiers::class.java)
         val json = """{"string":{"name":["Hello, world!"]}}"""
         val value = MultipleJsonQualifiers("Hello, world!")
-        assertEquals(value, adapter.fromJson(json))
-        assertEquals(json, adapter.toJson(value))
+        assertThat(adapter.fromJson(json))
+            .isEqualTo(value)
+        assertThat(adapter.toJson(value))
+            .isEqualTo(json)
     }
 
     @Test
     fun testToString() {
-        assertEquals("KotshiJsonAdapter(NestedClasses)", moshi.adapter(NestedClasses::class.java).toString())
-        assertEquals("KotshiJsonAdapter(NestedClasses.Inner)", moshi.adapter(NestedClasses.Inner::class.java).toString())
-    }
-
-    @Test
-    fun testEmptyClass() {
-        val adapter = moshi.adapter(EmptyClass::class.java)
-        assert(adapter.fromJson("{}") is EmptyClass)
-        assertNull(adapter.fromJson("null"))
-        assertEquals("{}", adapter.toJson(EmptyClass()))
-        assertEquals("null", adapter.toJson(null))
+        assertThat(moshi.adapter(NestedClasses::class.java).toString())
+            .isEqualTo("KotshiJsonAdapter(NestedClasses)")
+        assertThat(moshi.adapter(NestedClasses.Inner::class.java).toString())
+            .isEqualTo("KotshiJsonAdapter(NestedClasses.Inner)")
     }
 }

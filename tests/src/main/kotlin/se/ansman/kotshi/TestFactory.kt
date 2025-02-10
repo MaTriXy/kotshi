@@ -2,9 +2,6 @@ package se.ansman.kotshi
 
 import com.squareup.moshi.JsonAdapter
 
+@OptIn(ExperimentalStdlibApi::class)
 @KotshiJsonAdapterFactory
-abstract class TestFactory : JsonAdapter.Factory {
-    companion object {
-        val INSTANCE: TestFactory = KotshiTestFactory()
-    }
-}
+object TestFactory : JsonAdapter.Factory by KotshiTestFactory
